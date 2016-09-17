@@ -72,6 +72,22 @@ void D3D12VertexProgramDecompiler::insertInputs(std::stringstream & OS, const st
 		if (declare_input(OS, attribute, rsx_vertex_program.rsx_vertex_inputs, t_register))
 			t_register++;
 	}
+
+	for (const ParamType PT : m_parr.params[PF_PARAM_UNIFORM])
+	{
+		//only sampler2d currently supported (decompiler-side)
+		if (PT.type != "sampler2D")
+			continue;
+
+		OS << std::endl;
+
+		for (const ParamItem &PI : PT.items)
+		{
+			size_t textureIndex = t_register + atoi(PI.name.data() + 3);
+			OS << "Texture2D " << PI.name << " : register(t" << textureIndex << ");" << std::endl;
+			OS << "sampler " << PI.name << "sampler : register(s" << textureIndex << ");" << std::endl;
+		}
+	}
 }
 
 void D3D12VertexProgramDecompiler::insertConstants(std::stringstream & OS, const std::vector<ParamType> & constants)
@@ -80,6 +96,9 @@ void D3D12VertexProgramDecompiler::insertConstants(std::stringstream & OS, const
 	OS << "{" << std::endl;
 	for (const ParamType PT : constants)
 	{
+		if (PT.type == "sampler2D")
+			continue;
+
 		for (const ParamItem &PI : PT.items)
 			OS << "	" << PT.type << " " << PI.name << ";" << std::endl;
 	}
@@ -130,7 +149,7 @@ static const reg_info reg_table[] =
 	{ "gl_ClipDistance[1]", false, "dst_reg5", ".z", false },
 	{ "gl_ClipDistance[2]", false, "dst_reg5", ".w", false },
 	// TODO: Handle user clip distance properly
-/*	{ "gl_PointSize", false, "dst_reg6", ".x", false },
+	/*	{ "gl_PointSize", false, "dst_reg6", ".x", false },
 	{ "gl_ClipDistance[3]", false, "dst_reg6", ".y", false },
 	{ "gl_ClipDistance[4]", false, "dst_reg6", ".z", false },
 	{ "gl_ClipDistance[5]", false, "dst_reg6", ".w", false },*/

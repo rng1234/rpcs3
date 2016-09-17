@@ -56,7 +56,8 @@ D3D12_SAMPLER_DESC get_sampler_desc(const rsx::texture &texture)
 
 namespace
 {
-	CD3DX12_RESOURCE_DESC get_texture_description(const rsx::texture &texture)
+	template <typename RsxTextureType>
+	CD3DX12_RESOURCE_DESC get_texture_description(const RsxTextureType &texture)
 	{
 		const u8 format = texture.format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
 		DXGI_FORMAT dxgi_format = get_texture_format(format);
@@ -91,8 +92,9 @@ namespace {
 	/**
 	 * Allocate buffer in texture_buffer_heap big enough and upload data into existing_texture which should be in COPY_DEST state
 	 */
+	template <typename RsxTexturetype>
 	void update_existing_texture(
-		const rsx::texture &texture,
+		const RsxTexturetype &texture,
 		ID3D12GraphicsCommandList *command_list,
 		d3d12_data_heap &texture_buffer_heap,
 		ID3D12Resource *existing_texture)
@@ -144,8 +146,9 @@ namespace {
  * Create a texture residing in default heap and generate uploads commands in commandList,
  * using a temporary texture buffer.
  */
+template <typename RsxTextureType>
 ComPtr<ID3D12Resource> upload_single_texture(
-	const rsx::texture &texture,
+	const RsxTextureType &texture,
 	ID3D12Device *device,
 	ID3D12GraphicsCommandList *command_list,
 	d3d12_data_heap &texture_buffer_heap)
@@ -164,8 +167,8 @@ ComPtr<ID3D12Resource> upload_single_texture(
 	return result;
 }
 
-
-D3D12_SHADER_RESOURCE_VIEW_DESC get_srv_descriptor_with_dimensions(const rsx::texture &tex)
+template <typename RsxTextureType>
+D3D12_SHADER_RESOURCE_VIEW_DESC get_srv_descriptor_with_dimensions(const RsxTextureType &tex)
 {
 	D3D12_SHADER_RESOURCE_VIEW_DESC shared_resource_view_desc = {};
 	switch (tex.get_extended_texture_dimension())
@@ -467,6 +470,237 @@ void D3D12GSRender::upload_textures(ID3D12GraphicsCommandList *command_list, siz
 			);
 
 		m_device->CreateSampler(&get_sampler_desc(rsx::method_registers.fragment_textures[i]),
+			CD3DX12_CPU_DESCRIPTOR_HANDLE(m_current_sampler_descriptors->GetCPUDescriptorHandleForHeapStart())
+			.Offset((UINT)i, m_descriptor_stride_samplers));
+	}
+}
+
+void D3D12GSRender::upload_vertex_textures(ID3D12GraphicsCommandList *command_list, size_t first_index, size_t texture_count)
+{
+	for (u32 index = 0, i = first_index; index < texture_count; ++i, ++index)
+	{
+		//TODO: Track if vtexture needs rebinding (m_vertex_textures_dirty)
+
+		if (!rsx::method_registers.vertex_textures[index].enabled())
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC shader_resource_view_desc = {};
+			shader_resource_view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			shader_resource_view_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			shader_resource_view_desc.Texture2D.MipLevels = 1;
+			shader_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0);
+
+			m_device->CreateShaderResourceView(m_dummy_texture, &shader_resource_view_desc,
+				CD3DX12_CPU_DESCRIPTOR_HANDLE(m_current_texture_descriptors->GetCPUDescriptorHandleForHeapStart())
+				.Offset((UINT)i, m_descriptor_stride_srv_cbv_uav)
+			);
+
+			D3D12_SAMPLER_DESC sampler_desc = {};
+			sampler_desc.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+			sampler_desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+			sampler_desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+			sampler_desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+
+			m_device->CreateSampler(&sampler_desc,
+				CD3DX12_CPU_DESCRIPTOR_HANDLE(m_current_sampler_descriptors->GetCPUDescriptorHandleForHeapStart())
+				.Offset((UINT)i, m_descriptor_stride_samplers));
+
+			continue;
+		}
+
+		size_t w = rsx::method_registers.vertex_textures[index].width(), h = rsx::method_registers.vertex_textures[index].height();
+
+		if (!w || !h)
+		{
+			LOG_ERROR(RSX, "Texture upload requested but invalid texture dimensions passed");
+			continue;
+		}
+
+		const u32 texaddr = rsx::get_address(rsx::method_registers.vertex_textures[index].offset(), rsx::method_registers.vertex_textures[index].location());
+
+		const u8 format = rsx::method_registers.vertex_textures[index].format() & ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN);
+		bool is_swizzled = !(rsx::method_registers.vertex_textures[index].format() & CELL_GCM_TEXTURE_LN);
+
+		ID3D12Resource *vram_texture;
+		std::pair<texture_entry, ComPtr<ID3D12Resource> > *cached_texture = m_texture_cache.find_data_if_available(texaddr);
+		bool is_render_target = false, is_depth_stencil_texture = false;
+
+		if (vram_texture = m_rtts.get_texture_from_render_target_if_applicable(texaddr))
+		{
+			is_render_target = true;
+		}
+		else if (vram_texture = m_rtts.get_texture_from_depth_stencil_if_applicable(texaddr))
+		{
+			is_depth_stencil_texture = true;
+		}
+		else if (cached_texture != nullptr && (cached_texture->first == texture_entry(format, w, h, rsx::method_registers.vertex_textures[index].depth(), rsx::method_registers.vertex_textures[index].get_exact_mipmap_count())))
+		{
+			if (cached_texture->first.m_is_dirty)
+			{
+				command_list->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(cached_texture->second.Get(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_DEST));
+				update_existing_texture(rsx::method_registers.vertex_textures[index], command_list, m_buffer_data, cached_texture->second.Get());
+				m_texture_cache.protect_data(texaddr, texaddr, get_texture_size(rsx::method_registers.vertex_textures[index]));
+			}
+			vram_texture = cached_texture->second.Get();
+		}
+		else
+		{
+			if (cached_texture != nullptr)
+				get_current_resource_storage().dirty_textures.push_back(m_texture_cache.remove_from_cache(texaddr));
+			ComPtr<ID3D12Resource> tex = upload_single_texture(rsx::method_registers.vertex_textures[index], m_device.Get(), command_list, m_buffer_data);
+			std::wstring name = L"texture_@" + std::to_wstring(texaddr);
+			tex->SetName(name.c_str());
+			vram_texture = tex.Get();
+			m_texture_cache.store_and_protect_data(texaddr, texaddr, get_texture_size(rsx::method_registers.vertex_textures[index]), format, w, h, rsx::method_registers.vertex_textures[index].depth(), rsx::method_registers.vertex_textures[index].get_exact_mipmap_count(), tex);
+		}
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC shared_resource_view_desc = get_srv_descriptor_with_dimensions(rsx::method_registers.vertex_textures[index]);
+		shared_resource_view_desc.Format = get_texture_format(format);
+
+		switch (format)
+		{
+		default:
+			LOG_ERROR(RSX, "Unimplemented mapping for texture format: 0x%x", format);
+			break;
+
+		case CELL_GCM_TEXTURE_COMPRESSED_HILO8:
+		case CELL_GCM_TEXTURE_COMPRESSED_DXT1:
+		case CELL_GCM_TEXTURE_COMPRESSED_DXT23:
+		case CELL_GCM_TEXTURE_COMPRESSED_DXT45:
+		case CELL_GCM_TEXTURE_DEPTH24_D8:
+		case CELL_GCM_TEXTURE_DEPTH24_D8_FLOAT:
+		case CELL_GCM_TEXTURE_DEPTH16:
+		case CELL_GCM_TEXTURE_DEPTH16_FLOAT:
+		case CELL_GCM_TEXTURE_X32_FLOAT:
+		case CELL_GCM_TEXTURE_W16_Z16_Y16_X16_FLOAT:
+		case CELL_GCM_TEXTURE_W32_Z32_Y32_X32_FLOAT:
+		case CELL_GCM_TEXTURE_R5G5B5A1:
+		case CELL_GCM_TEXTURE_D1R5G5B5:
+		case CELL_GCM_TEXTURE_A1R5G5B5:
+		case CELL_GCM_TEXTURE_A4R4G4B4:
+		case CELL_GCM_TEXTURE_R5G6B5:
+		case CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
+		case CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			break;
+
+		case CELL_GCM_TEXTURE_B8:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0);
+			break;
+
+		case CELL_GCM_TEXTURE_G8B8:
+		{
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2);
+			break;
+		}
+
+		case CELL_GCM_TEXTURE_R6G5B5: // TODO: Remap it to another format here, so it's not glitched out
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0);
+			break;
+
+		case CELL_GCM_TEXTURE_X16:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0);
+			break;
+
+		case CELL_GCM_TEXTURE_Y16_X16:
+		case CELL_GCM_TEXTURE_COMPRESSED_HILO_S8:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0);
+			break;
+
+		case CELL_GCM_TEXTURE_Y16_X16_FLOAT:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1);
+			break;
+
+		case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_B8R8_G8R8:
+		case ~(CELL_GCM_TEXTURE_LN | CELL_GCM_TEXTURE_UN) & CELL_GCM_TEXTURE_COMPRESSED_R8B8_R8G8:
+			shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0);
+			break;
+
+		case CELL_GCM_TEXTURE_A8R8G8B8:
+		case CELL_GCM_TEXTURE_D8R8G8B8:
+		{
+			if (is_render_target)
+			{
+				shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_3,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2);
+			}
+			else if (is_depth_stencil_texture)
+			{
+				shared_resource_view_desc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+				shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0);
+			}
+			else
+			{
+				shared_resource_view_desc.Shader4ComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+					D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_3);
+			}
+
+			break;
+		}
+		}
+
+		m_device->CreateShaderResourceView(vram_texture, &shared_resource_view_desc,
+			CD3DX12_CPU_DESCRIPTOR_HANDLE(m_current_texture_descriptors->GetCPUDescriptorHandleForHeapStart())
+			.Offset((UINT)i, m_descriptor_stride_srv_cbv_uav)
+		);
+
+		D3D12_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D12_ENCODE_BASIC_FILTER(D3D12_FILTER_TYPE_POINT, D3D12_FILTER_TYPE_POINT, D3D12_FILTER_TYPE_POINT, D3D12_FILTER_REDUCTION_TYPE_STANDARD);
+		samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+		samplerDesc.MaxAnisotropy = 1;
+		samplerDesc.MipLODBias = 0;
+		samplerDesc.BorderColor[0] = (FLOAT)rsx::method_registers.vertex_textures[index].border_color();
+		samplerDesc.BorderColor[1] = (FLOAT)rsx::method_registers.vertex_textures[index].border_color();
+		samplerDesc.BorderColor[2] = (FLOAT)rsx::method_registers.vertex_textures[index].border_color();
+		samplerDesc.BorderColor[3] = (FLOAT)rsx::method_registers.vertex_textures[index].border_color();
+		samplerDesc.MinLOD = (FLOAT)(rsx::method_registers.vertex_textures[index].min_lod() >> 8);
+		samplerDesc.MaxLOD = (FLOAT)(rsx::method_registers.vertex_textures[index].max_lod() >> 8);
+
+		m_device->CreateSampler(&samplerDesc,
 			CD3DX12_CPU_DESCRIPTOR_HANDLE(m_current_sampler_descriptors->GetCPUDescriptorHandleForHeapStart())
 			.Offset((UINT)i, m_descriptor_stride_samplers));
 	}

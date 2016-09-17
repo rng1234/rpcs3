@@ -80,6 +80,8 @@ std::string getFunctionImp(FUNCTION f)
 		return "ddx($0)";
 	case FUNCTION::FUNCTION_DFDY:
 		return "ddy($0)";
+	case FUNCTION::FUNCTION_VERTEX_TEXTURE_FETCH2D:
+		return "$t.SampleLevel($tsampler, $0.xy, 0)";
 	}
 }
 

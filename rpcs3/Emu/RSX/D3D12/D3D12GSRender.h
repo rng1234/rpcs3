@@ -64,7 +64,7 @@ private:
 	RSXVertexProgram m_vertex_program;
 	RSXFragmentProgram m_fragment_program;
 	PipelineStateObjectCache m_pso_cache;
-	std::tuple<ComPtr<ID3D12PipelineState>, size_t, size_t> m_current_pso;
+	std::tuple<ComPtr<ID3D12PipelineState>, size_t, size_t, size_t> m_current_pso;
 
 	struct
 	{
@@ -161,6 +161,7 @@ private:
 	 * If the count of enabled texture is below texture_count, fills with dummy texture and sampler.
 	 */
 	void upload_textures(ID3D12GraphicsCommandList *command_list, size_t texture_count);
+	void upload_vertex_textures(ID3D12GraphicsCommandList *command_list, size_t first_index, size_t texture_count);
 
 	/**
 	 * Creates render target if necessary.
