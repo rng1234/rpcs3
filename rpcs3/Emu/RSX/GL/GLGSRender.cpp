@@ -477,10 +477,8 @@ void GLGSRender::end()
 
 void GLGSRender::set_viewport()
 {
-	u16 viewport_x = rsx::method_registers.viewport_origin_x();
-	u16 viewport_y = rsx::method_registers.viewport_origin_y();
-	u16 viewport_w = rsx::method_registers.viewport_width();
-	u16 viewport_h = rsx::method_registers.viewport_height();
+	//NOTE: scale offset matrix already contains the viewport transformation
+	glViewport(0, 0, rsx::method_registers.surface_clip_width(), rsx::method_registers.surface_clip_height());
 
 	u16 scissor_x = rsx::method_registers.scissor_origin_x();
 	u16 scissor_w = rsx::method_registers.scissor_width();
@@ -491,14 +489,11 @@ void GLGSRender::set_viewport()
 
 	if (shader_window_origin == rsx::window_origin::bottom)
 	{
-		__glcheck glViewport(viewport_x, viewport_y, viewport_w, viewport_h);
 		__glcheck glScissor(scissor_x, scissor_y, scissor_w, scissor_h);
 	}
 	else
 	{
 		u16 shader_window_height = rsx::method_registers.shader_window_height();
-
-		__glcheck glViewport(viewport_x, shader_window_height - viewport_y - viewport_h + 1, viewport_w, viewport_h);
 		__glcheck glScissor(scissor_x, shader_window_height - scissor_y - scissor_h + 1, scissor_w, scissor_h);
 	}
 
@@ -684,7 +679,39 @@ bool GLGSRender::load_program()
 	auto mapping = m_uniform_ring_buffer.alloc_from_reserve(512);
 	buf = static_cast<u8*>(mapping.first);
 	scale_offset_offset = mapping.second;
-	fill_scale_offset_data(buf, false);
+	
+	//Fill local scale_offset_matrix
+	//Take window origin into account (needs testing)
+	{
+		int clip_w = rsx::method_registers.surface_clip_width();
+		int clip_h = rsx::method_registers.surface_clip_height();
+
+		float scale_x = rsx::method_registers.viewport_scale_x() / (clip_w / 2.f);
+		float offset_x = rsx::method_registers.viewport_offset_x() - (clip_w / 2.f);
+		offset_x /= clip_w / 2.f;
+
+		u16 viewport_offset_y = rsx::method_registers.viewport_offset_y();
+		if (rsx::method_registers.shader_window_origin() == rsx::window_origin::top)
+		{
+			//offset given is from the top of the clip window
+			viewport_offset_y = rsx::method_registers.shader_window_height() - rsx::method_registers.viewport_height() - viewport_offset_y + 1;
+		}
+
+		float scale_y = rsx::method_registers.viewport_scale_y() / (clip_h / 2.f);
+		float offset_y = (viewport_offset_y - (clip_h / 2.f));
+		offset_y /= clip_h / 2.f;
+
+		float scale_z = rsx::method_registers.viewport_scale_z();
+		float offset_z = rsx::method_registers.viewport_offset_z();
+		offset_z -= .5;
+
+		float one = 1.f;
+
+		stream_vector(buf, (u32&)scale_x, 0, 0, (u32&)offset_x);
+		stream_vector((char*)buf + 16, 0, (u32&)scale_y, 0, (u32&)offset_y);
+		stream_vector((char*)buf + 32, 0, 0, (u32&)scale_z, (u32&)offset_z);
+		stream_vector((char*)buf + 48, 0, 0, 0, (u32&)one);
+	}
 
 	// Fragment state 
 	u32 is_alpha_tested = rsx::method_registers.alpha_test_enabled();
