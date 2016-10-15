@@ -859,12 +859,23 @@ void GLGSRender::flip(int buffer)
 	m_vertex_upload_time = 0;
 	m_textures_upload_time = 0;
 
+//	for (auto &tex : m_rtts.invalidated_resources)
+//		tex->remove();
+
+//	m_rtts.invalidated_resources.clear();
+
 	for (auto &tex : m_rtts.invalidated_resources)
 	{
-		tex->remove();
+		tex->ref_count++;
+
+		if (tex->ref_count > 1)
+			tex->remove();
+		else
+			tex->set_dirty();
 	}
 
-	m_rtts.invalidated_resources.clear();
+	m_rtts.invalidated_resources.remove_if(
+		[&](const std::unique_ptr<gl::render_target> &tex) { return (tex->ref_count > 1); } );
 }
 
 

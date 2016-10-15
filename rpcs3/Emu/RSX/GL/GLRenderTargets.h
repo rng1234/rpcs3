@@ -12,6 +12,10 @@ namespace gl
 
 	public:
 
+		int ref_count = 0;
+		rsx::surface_color_format color_format;
+		rsx::surface_depth_format depth_format;
+
 		render_target()
 		{
 			is_cleared = false;
@@ -20,6 +24,11 @@ namespace gl
 		void set_cleared()
 		{
 			is_cleared = true;
+		}
+
+		void set_dirty()
+		{
+			is_cleared = false;
 		}
 
 		bool cleared()
@@ -101,6 +110,7 @@ struct gl_render_target_traits
 		__glcheck result->pixel_pack_settings().swap_bytes(format.swap_bytes).aligment(1);
 		__glcheck result->pixel_unpack_settings().swap_bytes(format.swap_bytes).aligment(1);
 
+		result->color_format = surface_color_format;
 		return result;
 	}
 
@@ -129,26 +139,28 @@ struct gl_render_target_traits
 		__glcheck result->pixel_pack_settings().aligment(1);
 		__glcheck result->pixel_unpack_settings().aligment(1);
 
+		result->depth_format = surface_depth_format;
+
 		return result;
 	}
 
-	static void prepare_rtt_for_drawing(void *, gl::render_target*) {}
+	static void prepare_rtt_for_drawing(void *, gl::render_target* rtt) { rtt->ref_count = 0; }
 	static void prepare_rtt_for_sampling(void *, gl::render_target*) {}
-	static void prepare_ds_for_drawing(void *, gl::render_target*) {}
+	static void prepare_ds_for_drawing(void *, gl::render_target* ds) { ds->ref_count = 0;  }
 	static void prepare_ds_for_sampling(void *, gl::render_target*) {}
 
 	static
 	bool rtt_has_format_width_height(const std::unique_ptr<gl::render_target> &rtt, rsx::surface_color_format surface_color_format, size_t width, size_t height)
 	{
 		// TODO: check format
-		return rtt->width() == width && rtt->height() == height;
+		return rtt->width() == width && rtt->height() == height && surface_color_format == rtt->color_format;
 	}
 
 	static
 		bool ds_has_format_width_height(const std::unique_ptr<gl::render_target> &rtt, rsx::surface_depth_format surface_depth_stencil_format, size_t width, size_t height)
 	{
 		// TODO: check format
-		return rtt->width() == width && rtt->height() == height;
+		return rtt->width() == width && rtt->height() == height && rtt->depth_format == surface_depth_stencil_format;
 	}
 
 	// Note : pbo breaks fbo here so use classic texture copy
