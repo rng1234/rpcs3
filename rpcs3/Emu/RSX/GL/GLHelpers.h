@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <algorithm>
 
 #include "OpenGL.h"
 #include "../GCM.h"
@@ -735,7 +736,6 @@ namespace gl
 			{
 				buffer::data(m_limit, nullptr);
 				m_data_loc = 0;
-				offset = 0;
 			}
 
 			glBindBuffer((GLenum)m_target, m_id);
@@ -756,9 +756,16 @@ namespace gl
 
 			if (real_size > m_mapped_bytes)
 			{
-				LOG_WARNING(RSX, "Working buffer reserved was too small. Performance penalty");
+				//Missed allocation. We take a performance hit on doing this.
+				//Overallocate slightly for the next allocation if requested size is too small
 				unmap();
-				reserve_storage_on_heap(real_size);
+				reserve_storage_on_heap(std::max(real_size, 4096U));
+				
+				offset = m_data_loc;
+				if (m_data_loc) offset = align(offset, alignment);
+
+				padding = (offset - m_data_loc);
+				real_size = padding + alloc_size;
 			}
 
 			m_data_loc = offset + alloc_size;
@@ -1365,7 +1372,14 @@ namespace gl
 			if (glTextureBufferRangeEXT == nullptr)
 				fmt::throw_exception("OpenGL error: partial buffer access for textures is unsupported on your system" HERE);
 
+			glGetError();
 			__glcheck glTextureBufferRangeEXT(id(), (GLenum)target::textureBuffer, gl_format_type, buf.id(), offset, length);
+
+			if (glGetError())
+			{
+				LOG_ERROR(RSX, "TexBufferRange has failed!, buffer id = %d, offset=%d, length=%d", buf.id(), offset, length);
+				fmt::throw_exception("OpenGL error: texture buffer allocation has failed" HERE);
+			}
 		}
 
 		void copy_from(buffer &buf, u32 gl_format_type)
