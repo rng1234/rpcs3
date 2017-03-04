@@ -1459,10 +1459,10 @@ namespace gl
 				return;
 			}*/
 
-			if (glTextureBufferRangeEXT == nullptr)
-				fmt::throw_exception("OpenGL error: partial buffer access for textures is unsupported on your system" HERE);
+//			if (glTextureBufferRangeEXT == nullptr)
+//				fmt::throw_exception("OpenGL error: partial buffer access for textures is unsupported on your system" HERE);
 
-			__glcheck glTextureBufferRangeEXT(id(), (GLenum)target::textureBuffer, gl_format_type, buf.id(), offset, length);
+			__glcheck glTextureBufferRange(id(), gl_format_type, buf.id(), offset, length);
 		}
 
 		void copy_from(buffer &buf, u32 gl_format_type)
