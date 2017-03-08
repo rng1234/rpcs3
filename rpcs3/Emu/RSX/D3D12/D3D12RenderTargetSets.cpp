@@ -186,6 +186,16 @@ void D3D12GSRender::prepare_render_targets(ID3D12GraphicsCommandList *copycmdlis
 		get_color_surface_addresses(), get_zeta_surface_address(),
 		m_device.Get(), clear_color, 1.f, 0);
 
+	const u16 pitchs[4] =
+	{
+		rsx::method_registers.surface_a_pitch(),
+		rsx::method_registers.surface_b_pitch(),
+		rsx::method_registers.surface_c_pitch(),
+		rsx::method_registers.surface_d_pitch(),
+	};
+
+	const u32 clip_height = rsx::method_registers.surface_clip_height();
+
 	// write descriptors
 	DXGI_FORMAT dxgi_format = get_color_surface_format(rsx::method_registers.surface_color());
 	D3D12_RENDER_TARGET_VIEW_DESC rtt_view_desc = {};
@@ -202,6 +212,15 @@ void D3D12GSRender::prepare_render_targets(ID3D12GraphicsCommandList *copycmdlis
 		m_device->CreateRenderTargetView(std::get<1>(m_rtts.m_bound_render_targets[i]), &rtt_view_desc,
 			CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtts.current_rtts_handle).Offset((INT)rtt_index * m_descriptor_stride_rtv));
 		rtt_index++;
+		
+		const u32 mem_range = pitchs[i] * clip_height;
+		const u32 dword_count = mem_range >> 2;
+		u32 *dst = (u32*)(vm::ps3::_ptr<u8>(std::get<0>(m_rtts.m_bound_render_targets[i])));
+
+		for (u32 n = 0; n < dword_count; ++n)
+		{
+			*dst++ = 0x0000C03F;
+		}
 	}
 	get_current_resource_storage().render_targets_descriptors_heap_index += rtt_index;
 

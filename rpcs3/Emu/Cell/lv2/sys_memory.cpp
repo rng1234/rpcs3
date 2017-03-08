@@ -50,6 +50,12 @@ error_code sys_memory_allocate(u32 size, u64 flags, vm::ptr<u32> alloc_addr)
 	// Allocate memory, write back the start address of the allocated area
 	*alloc_addr = verify(HERE, vm::alloc(size, vm::user_space, flags == SYS_MEMORY_PAGE_SIZE_1M ? 0x100000 : 0x10000));
 
+	auto &page_attr = pages_info.get_page_attr(*alloc_addr);
+	page_attr.page_size =
+		flags & SYS_MEMORY_PAGE_SIZE_1M  ? 1024 * 1024 :
+		flags & SYS_MEMORY_PAGE_SIZE_64K ?   64 * 1024 :
+		                                      4 * 1024;
+
 	return CELL_OK;
 }
 
@@ -110,6 +116,12 @@ error_code sys_memory_allocate_from_container(u32 size, u32 cid, u64 flags, vm::
 	// Allocate memory, write back the start address of the allocated area, use cid as the supplementary info
 	*alloc_addr = verify(HERE, vm::alloc(size, vm::user_space, flags == SYS_MEMORY_PAGE_SIZE_1M ? 0x100000 : 0x10000, cid));
 
+	auto &page_attr = pages_info.get_page_attr(*alloc_addr);
+	page_attr.page_size =
+		flags & SYS_MEMORY_PAGE_SIZE_1M ? 1024 * 1024 :
+		flags & SYS_MEMORY_PAGE_SIZE_64K ? 64 * 1024 :
+		4 * 1024;
+
 	return CELL_OK;
 }
 
@@ -146,10 +158,8 @@ error_code sys_memory_get_page_attribute(u32 addr, vm::ptr<sys_page_attr_t> attr
 {
 	sys_memory.error("sys_memory_get_page_attribute(addr=0x%x, attr=*0x%x)", addr, attr);
 
-	// TODO: Implement per thread page attribute setting.
-	attr->attribute = 0x40000ull; // SYS_MEMORY_PROT_READ_WRITE
-	attr->access_right = 0xFull; // SYS_MEMORY_ACCESS_RIGHT_ANY
-	attr->page_size = 4096;
+	auto &page_attr = pages_info.get_page_attr(addr);
+	*attr = page_attr;
 
 	return CELL_OK;
 }

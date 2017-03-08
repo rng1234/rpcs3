@@ -1307,6 +1307,14 @@ void VKGSRender::prepare_rtts()
 
 	std::vector<std::unique_ptr<vk::image_view>> fbo_images;
 
+	const u16 pitchs[4] =
+	{
+		rsx::method_registers.surface_a_pitch(),
+		rsx::method_registers.surface_b_pitch(),
+		rsx::method_registers.surface_c_pitch(),
+		rsx::method_registers.surface_d_pitch(),
+	};
+
 	for (u8 index : draw_buffers)
 	{
 		vk::image *raw = std::get<1>(m_rtts.m_bound_render_targets[index]);
@@ -1319,6 +1327,15 @@ void VKGSRender::prepare_rtts()
 		subres.levelCount = 1;
 
 		fbo_images.push_back(std::make_unique<vk::image_view>(*m_device, raw->value, VK_IMAGE_VIEW_TYPE_2D, raw->info.format, vk::default_component_map(), subres));
+
+		const u32 mem_range = pitchs[index] * clip_height;
+		const u32 dword_count = mem_range >> 2;
+		u32 *dst = (u32*)(vm::ps3::_ptr<u8>(std::get<0>(m_rtts.m_bound_render_targets[index])));
+
+		for (u32 n = 0; n < dword_count; ++n)
+		{
+			*dst++ = 0x0000C03F;
+		}
 	}
 
 	m_draw_buffers_count = static_cast<u32>(fbo_images.size());

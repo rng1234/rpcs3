@@ -31,7 +31,7 @@ s32 sceNpMatching2Init(u32 poolsize, s32 priority)
 {
 	sceNp2.todo("sceNpMatching2Init(poolsize=0x%x, priority=%d)", poolsize, priority);
 
-	return CELL_OK;
+	return SCE_NP_MATCHING2_SERVER_ERROR_SERVICE_UNAVAILABLE;
 }
 
 s32 sceNpMatching2Init2(u32 poolsize, s32 priority, vm::ptr<SceNpMatching2UtilityInitParam> param)
@@ -43,7 +43,7 @@ s32 sceNpMatching2Init2(u32 poolsize, s32 priority, vm::ptr<SceNpMatching2Utilit
 	// 2. Create heap area to be used by the NP matching 2 utility
 	// 3. Set maximum lengths for the event data queues in the system
 
-	return CELL_OK;
+	return SCE_NP_MATCHING2_SERVER_ERROR_SERVICE_UNAVAILABLE;
 }
 
 s32 sceNp2Term()

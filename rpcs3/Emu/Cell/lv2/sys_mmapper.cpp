@@ -4,6 +4,7 @@
 namespace vm { using namespace ps3; }
 
 logs::channel sys_mmapper("sys_mmapper", logs::level::notice);
+memory_pages_info pages_info;
 
 error_code sys_mmapper_allocate_address(u64 size, u64 flags, u64 alignment, vm::ptr<u32> alloc_addr)
 {
@@ -38,6 +39,36 @@ error_code sys_mmapper_allocate_address(u64 size, u64 flags, u64 alignment, vm::
 			if (const auto area = vm::map(static_cast<u32>(addr), static_cast<u32>(size), flags))
 			{
 				*alloc_addr = static_cast<u32>(addr);
+				
+				{
+					const u32 attribute =
+						flags & SYS_MEMORY_ATTR_READ_ONLY ? SYS_MEMORY_ATTR_READ_ONLY : SYS_MEMORY_ATTR_READ_WRITE;
+
+					const u32 access_right =
+						flags & SYS_MEMORY_ACCESS_RIGHT_PPU_THR ? SYS_MEMORY_ACCESS_RIGHT_PPU_THR :
+						flags & SYS_MEMORY_ACCESS_RIGHT_SPU_THR ? SYS_MEMORY_ACCESS_RIGHT_SPU_THR :
+						flags & SYS_MEMORY_ACCESS_RIGHT_RAW_SPU ? SYS_MEMORY_ACCESS_RIGHT_RAW_SPU :
+						flags & SYS_MEMORY_ACCESS_RIGHT_NONE ? SYS_MEMORY_ACCESS_RIGHT_NONE :
+						SYS_MEMORY_ACCESS_RIGHT_ANY;
+
+					const u32 page_size =
+						flags & SYS_MEMORY_PAGE_SIZE_1M ? 1024 * 1024 :
+						flags & SYS_MEMORY_PAGE_SIZE_64K ? 64 * 1024 :
+						4 * 1024;
+
+					const u32 offset = static_cast<u32>(addr);
+					const u32 padding = (alignment - (offset & (alignment - 1))) & (alignment - 1);
+
+					LOG_ERROR(GENERAL, "sys_page_attr_t: attribute=0x%X, access=0x%X, page_size=0x%X, padding=0x%X",
+						attribute, access_right, page_size, padding);
+
+					auto &page_attr = pages_info.get_page_attr(*alloc_addr);
+					page_attr.attribute = attribute;
+					page_attr.access_right = access_right;
+					page_attr.page_size = page_size;
+					page_attr.pad = padding;
+				}
+
 				return CELL_OK;
 			}
 		}

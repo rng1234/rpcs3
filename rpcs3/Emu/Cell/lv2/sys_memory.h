@@ -81,6 +81,27 @@ struct lv2_memory_container
 	}
 };
 
+struct memory_pages_info
+{
+private:
+	std::unordered_map<u32, sys_page_attr_t> info;
+
+public:
+
+	sys_page_attr_t& get_page_attr(u32 addr)
+	{
+		if (info.find(addr) == info.end())
+		{
+			LOG_ERROR(GENERAL, "get_page_attr: address not found 0x%X", addr);
+
+			sys_page_attr_t default_attr = {0x40000ull, 0xFull, 1024*1024, 0};
+			info.emplace(addr, default_attr);
+		}
+
+		return info.at(addr);
+	}
+};
+
 // SysCalls
 error_code sys_memory_allocate(u32 size, u64 flags, vm::ps3::ptr<u32> alloc_addr);
 error_code sys_memory_allocate_from_container(u32 size, u32 cid, u64 flags, vm::ps3::ptr<u32> alloc_addr);
@@ -90,3 +111,5 @@ error_code sys_memory_get_user_memory_size(vm::ps3::ptr<sys_memory_info_t> mem_i
 error_code sys_memory_container_create(vm::ps3::ptr<u32> cid, u32 size);
 error_code sys_memory_container_destroy(u32 cid);
 error_code sys_memory_container_get_size(vm::ps3::ptr<sys_memory_info_t> mem_info, u32 cid);
+
+extern memory_pages_info pages_info;
