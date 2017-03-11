@@ -205,6 +205,17 @@ void GLGSRender::init_buffers(bool skip_reading)
 					surface_info[i].pitch = 0;
 				}
 			}
+
+			if (!g_cfg_rsx_write_color_buffers && surface_format == rsx::surface_color_format::x32)
+			{
+				const u32 dword_count = (pitchs[i] * clip_vertical) >> 2;
+				u8 *dst = vm::ps3::_ptr<u8>(surface_addresses[i]);
+				u32 *pixels = (u32*)dst;
+				for (u32 n = 0; n < dword_count; n++)
+				{
+					dst[n] = 0x0000C03F;
+				}
+			}
 		}
 		else
 			surface_info[i] = {};

@@ -34,7 +34,7 @@ namespace vm
 		page_fault_notification = (1 << 3),
 		page_no_reservations    = (1 << 4),
 		page_64k_size           = (1 << 5),
-
+		page_1m_size			= (1 << 6),
 		page_allocated          = (1 << 7),
 	};
 

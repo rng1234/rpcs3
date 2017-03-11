@@ -8,6 +8,7 @@
 #include "VKFormats.h"
 
 extern cfg::bool_entry g_cfg_rsx_overlay;
+extern cfg::bool_entry g_cfg_rsx_write_color_buffers;
 
 namespace
 {
@@ -1328,13 +1329,16 @@ void VKGSRender::prepare_rtts()
 
 		fbo_images.push_back(std::make_unique<vk::image_view>(*m_device, raw->value, VK_IMAGE_VIEW_TYPE_2D, raw->info.format, vk::default_component_map(), subres));
 
-		const u32 mem_range = pitchs[index] * clip_height;
-		const u32 dword_count = mem_range >> 2;
-		u32 *dst = (u32*)(vm::ps3::_ptr<u8>(std::get<0>(m_rtts.m_bound_render_targets[index])));
-
-		for (u32 n = 0; n < dword_count; ++n)
+		if (!g_cfg_rsx_write_color_buffers && rsx::method_registers.surface_color() == rsx::surface_color_format::x32)
 		{
-			*dst++ = 0x0000C03F;
+			const u32 mem_range = pitchs[index] * clip_height;
+			const u32 dword_count = mem_range >> 2;
+			u32 *dst = (u32*)(vm::ps3::_ptr<u8>(std::get<0>(m_rtts.m_bound_render_targets[index])));
+
+			for (u32 n = 0; n < dword_count; ++n)
+			{
+				*dst++ = 0x0000C03F;
+			}
 		}
 	}
 
