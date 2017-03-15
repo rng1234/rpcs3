@@ -161,7 +161,7 @@ namespace
 
 	GLenum front_face(rsx::front_face op)
 	{
-		bool invert = (rsx::method_registers.shader_window_origin() == rsx::window_origin::bottom);
+		bool invert = false;//(rsx::method_registers.shader_window_origin() == rsx::window_origin::bottom);
 
 		switch (op)
 		{
@@ -173,7 +173,7 @@ namespace
 
 	GLenum cull_face(rsx::cull_face op)
 	{
-		bool invert = (rsx::method_registers.shader_window_origin() == rsx::window_origin::top);
+		bool invert = false;//(rsx::method_registers.shader_window_origin() == rsx::window_origin::top);
 
 		switch (op)
 		{
